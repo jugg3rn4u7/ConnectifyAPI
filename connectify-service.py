@@ -104,5 +104,22 @@ def verify_code():
 	print('Error on line {}'.format(sys.exc_info()[-1].tb_lineno))
         return jsonify(result='error')
 
+@app.route("/connectifyapi/check-number", methods=["POST"])
+@cross_origin()
+def checkNumber():
+    try:
+	json_data = request.get_json(force=True)
+        phoneNumber = json_data["phoneNumber"]
+        users = db["user-collection"]
+        _user = users.find_one({ "phoneNumber": phoneNumber })
+        if(_user == None):
+            return jsonify(result='ok')
+        else:
+            return jsonify(result='exists')
+    except Exception as e:
+	print('error %s' % e)
+	print('Error on line {}'.format(sys.exc_info()[-1].tb_lineno))
+        return jsonify(result='error')
+
 if __name__ == "__main__":
     app.run(host=HOST, port=PORT)
