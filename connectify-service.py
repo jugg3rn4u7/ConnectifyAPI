@@ -17,6 +17,9 @@ import dbsettings
 import json
 import sys
 import os
+import time
+import md5
+import re
 from random import randint
 
 # CONSTANTS
@@ -35,6 +38,11 @@ db = mongoClient[connection['DATABASE']]
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": ALLOWED_ORIGINS}})
 
+BASE_FOLDER = os.path.dirname(os.path.abspath(__file__))
+UPLOAD_FOLDER = os.path.join(BASE_FOLDER, 'files')
+
+VALID_EXTENSIONS = set(['png', 'jpg', 'jpeg'])
+
 @app.route("/connectifyapi/hello")
 @cross_origin()
 def hello():
@@ -45,14 +53,16 @@ def hello():
 def create_user():
     try:
         json_data = request.get_json(force=True)
-	phoneNumber = json_data["phoneNumber"]
+	phoneNumber = re.sub('[()-]', '', json_data["phoneNumber"])
 	password = json_data["password"]
     	users = db['user-collection']
-    	users.update(
-		users.find_one({ "phoneNumber": phoneNumber }), 		{ 
-		    "$set": { "password": password }
-		 }
-	)
+	m = md5.new()
+	m.update(phoneNumber + "_" + password)
+	salt = m.hexdigest()
+	print(phoneNumber)
+	print(password) 
+	print(salt)
+    	users.find_one_and_update({ "phoneNumber": phoneNumber }, { "$set": { "password": password, "salt": salt }})
     	return jsonify(result='ok')
     except Exception as e:
 	e = sys.exc_info()[0]
@@ -74,10 +84,10 @@ def send_code():
 	users = db['user-collection']
 	_user = users.find_one({"phoneNumber": receiverPhoneNumber})
 	if(_user == None):
-		users.insert({ "phoneNumber": receiverPhoneNumber, "password": "", "verified": 0, "code": code })
+		users.insert({ "phoneNumber": receiverPhoneNumber, "password": "", "verified": 0, "code": code, "salt": "" })
 	else:
 		users.update_one(_user, { 
-			"$set": { "phoneNumber": receiverPhoneNumber, "password": "", "verified": 0, "code": code }
+			"$set": { "phoneNumber": receiverPhoneNumber, "password": "", "verified": 0, "code": code, "salt": "" }
 		})
 	return jsonify(result='ok')
     except TwilioRestException as e:
@@ -120,6 +130,36 @@ def checkNumber():
 	print('error %s' % e)
 	print('Error on line {}'.format(sys.exc_info()[-1].tb_lineno))
         return jsonify(result='error')
+
+@app.route("/connectifyapi/upload-avatar", methods=["POST"])
+@cross_origin()
+def uploadAvatar():
+    try:
+	raw_data = request.data
+	unix_time = str(time.time()).split(".")[0]
+	new_file = os.path.join(UPLOAD_FOLDER, unix_time)
+	with open(new_file, "w+") as f:
+	    f.write(raw_data)
+	return jsonify(result="ok")
+    except Exception as e:
+	print('Error %s' % e)
+	return jsonify(result="error")
+
+@app.route("/connectifyapi/authenticate", methods=["POST"])
+@cross_origin()
+def authenticate():
+    try:
+	json_data = request.get_json(force=True)
+	salt = json_data["salt"]
+	users = db["user-collection"]
+        _user = users.find_one({ "salt": salt })
+        if(_user == None):
+            return jsonify(result='invalid')
+        else:
+            return jsonify(result='valid')
+    except Exception as e:
+	print('Error %s' % e)
+	return jsonify(result="error")
 
 if __name__ == "__main__":
     app.run(host=HOST, port=PORT)
