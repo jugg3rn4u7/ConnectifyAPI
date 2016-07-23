@@ -21,6 +21,7 @@ import time
 import md5
 import re
 from random import randint
+import models
 
 # CONSTANTS
 HOST = "0.0.0.0"
@@ -34,6 +35,8 @@ TWILIO_SENDER_NUMBER = "+12013800248"
 connection = dbsettings.connection
 mongoClient = MongoClient(connection['HOST'], connection['PORT'])
 db = mongoClient[connection['DATABASE']]
+
+User = models.User
 
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": ALLOWED_ORIGINS}})
@@ -53,16 +56,13 @@ def hello():
 def create_user():
     try:
         json_data = request.get_json(force=True)
-	phoneNumber = re.sub('[()-]', '', json_data["phoneNumber"])
+	phoneNumber = json_data["phoneNumber"]
 	password = json_data["password"]
     	users = db['user-collection']
 	m = md5.new()
-	m.update(phoneNumber + "_" + password)
+	m.update(phoneNumber+ "_" +password)
 	salt = m.hexdigest()
-	print(phoneNumber)
-	print(password) 
-	print(salt)
-    	users.find_one_and_update({ "phoneNumber": phoneNumber }, { "$set": { "password": password, "salt": salt }})
+    	users.update({ "phoneNumber": phoneNumber }, { "$set": { "password": password, "salt_": salt }}, upsert=True, multi=True)
     	return jsonify(result='ok')
     except Exception as e:
 	e = sys.exc_info()[0]
@@ -82,13 +82,8 @@ def send_code():
 	txtMessage = "Hi User! This is Connectify. Your verification code is {0}.".format(code)
 	twilioClient.messages.create(body=txtMessage, from_=TWILIO_SENDER_NUMBER, to=receiverPhoneNumber)
 	users = db['user-collection']
-	_user = users.find_one({"phoneNumber": receiverPhoneNumber})
-	if(_user == None):
-		users.insert({ "phoneNumber": receiverPhoneNumber, "password": "", "verified": 0, "code": code, "salt": "" })
-	else:
-		users.update_one(_user, { 
-			"$set": { "phoneNumber": receiverPhoneNumber, "password": "", "verified": 0, "code": code, "salt": "" }
-		})
+	users.update({"phoneNumber": receiverPhoneNumber}, { 
+			"$set": {"phoneNumber": receiverPhoneNumber, "password": "", "verified": 0, "code": code, "salt_": "" }}, upsert=True)
 	return jsonify(result='ok')
     except TwilioRestException as e:
 	print(e)
@@ -152,11 +147,64 @@ def authenticate():
 	json_data = request.get_json(force=True)
 	salt = json_data["salt"]
 	users = db["user-collection"]
-        _user = users.find_one({ "salt": salt })
+        _user = users.find_one({ "salt_": salt })
         if(_user == None):
             return jsonify(result='invalid')
         else:
             return jsonify(result='valid')
+    except Exception as e:
+	print('Error %s' % e)
+	return jsonify(result="error")
+
+@app.route("/connectifyapi/new-session", methods=["POST"])
+@cross_origin()
+def createSession():
+    try:
+	json_data = request.get_json(force=True)
+	salt = json_data["salt"]
+	users = db["user-collection"]
+	_user = users.find_one({ "salt_": salt })
+	sessions = db["user-sessions"]
+	phoneNumber = _user["phoneNumber"]
+	m = md5.new()
+        m.update(str(time.time()))
+        session_id = m.hexdigest()
+	sessions.update({"salt_": salt}, {
+                        "$set": {"salt_": salt, "session_id": session_id }}, upsert=True)
+	session_obj = dict(
+		phoneNumber = phoneNumber,
+		session_id = session_id
+	)
+	return jsonify(session=session_obj)
+    except Exception as e:
+	print('Error %s' % e)
+	return jsonify(result="error")
+
+@app.route("/connectifyapi/destroy-session", methods=["DELETE"])
+@cross_origin()
+def deleteSession():
+    try:
+	sessions = db["user-sessions"]
+	json_data = request.get_json(force=True)
+	session_id = json_data["session_id"]
+	sessions.delete_many({ "session_id": session_id  })
+	return jsonify(result="deleted")
+    except Exception as e:
+	print('Error %s' % e)
+	return jsonify(result="error") 
+
+@app.route("/connectifyapi/check-session", methods=["GET"])
+@cross_origin()
+def checkSession():
+    try:
+	sessions = db["user-sessions"]
+	json_data = request.get_json(force=True)
+	salt = json_data["salt"]
+	_user = users.find_one({ "salt_": salt })
+        if(_user == None):
+            return jsonify(result='not_exists')
+        else:
+            return jsonify(result='exists')
     except Exception as e:
 	print('Error %s' % e)
 	return jsonify(result="error")
