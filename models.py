@@ -5,5 +5,7 @@ User = dict(
   password = "",
   verified = 0,
   code = 0,
-  salt = ""
+  salt = "",
+  avatar = 0,
+  avatarName = 0
 );

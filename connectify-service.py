@@ -22,6 +22,7 @@ import md5
 import re
 from random import randint
 import models
+from flask import send_file
 
 # CONSTANTS
 HOST = "0.0.0.0"
@@ -56,13 +57,14 @@ def hello():
 def create_user():
     try:
         json_data = request.get_json(force=True)
+	visitor_id = json_data["visitor_id"]
 	phoneNumber = json_data["phoneNumber"]
 	password = json_data["password"]
     	users = db['user-collection']
 	m = md5.new()
 	m.update(phoneNumber+ "_" +password)
 	salt = m.hexdigest()
-    	users.update({ "phoneNumber": phoneNumber }, { "$set": { "password": password, "salt_": salt }}, upsert=True, multi=True)
+    	users.update({ "visitor_id": visitor_id }, { "$set": { "phoneNumber": phoneNumber, "password": password, "salt_": salt }}, upsert=True, multi=True)
     	return jsonify(result='ok')
     except Exception as e:
 	e = sys.exc_info()[0]
@@ -83,10 +85,11 @@ def send_code():
 	twilioClient.messages.create(body=txtMessage, from_=TWILIO_SENDER_NUMBER, to=receiverPhoneNumber)
 	users = db['user-collection']
 	users.update({"phoneNumber": receiverPhoneNumber}, { 
-			"$set": {"phoneNumber": receiverPhoneNumber, "password": "", "verified": 0, "code": code, "salt_": "" }}, upsert=True)
+			"$set": {"phoneNumber": receiverPhoneNumber, "password": "", "verified": 0, "code": code, "salt_": "", "avatar": 0, "avatarName": 0 }}, upsert=True)
 	return jsonify(result='ok')
     except TwilioRestException as e:
 	print(e)
+	print('Error on line {}'.format(sys.exc_info()[-1].tb_lineno))
 	return jsonify(result='error')
 
 @app.route("/connectifyapi/verify-code", methods=["POST"])
@@ -130,14 +133,36 @@ def checkNumber():
 @cross_origin()
 def uploadAvatar():
     try:
+	salt = request.args.get("salt")
 	raw_data = request.data
 	unix_time = str(time.time()).split(".")[0]
-	new_file = os.path.join(UPLOAD_FOLDER, unix_time)
+	fname = unix_time + ".png"
+	new_file = os.path.join(UPLOAD_FOLDER, fname)
 	with open(new_file, "w+") as f:
 	    f.write(raw_data)
+	users = db['user-collection']
+	users.update(users.find_one({"salt_": salt}), { "$set": {"avatar": 1, "avatarName": fname }}, upsert=True)
 	return jsonify(result="ok")
     except Exception as e:
 	print('Error %s' % e)
+	print('Error on line {}'.format(sys.exc_info()[-1].tb_lineno))
+	return jsonify(result="error")
+
+@app.route("/connectifyapi/get-avatar", methods=["GET"])
+@cross_origin()
+def getAvatar():
+    try:
+	salt = request.args.get("salt")
+	_user = users.find_one({"salt_": salt})
+	exists = _user.avatar
+	if(exists == 1):
+	    fileName = _user.avatarName
+	    return send_from_directory(UPLOAD_FOLDER, fileName, as_attachment=False)
+	else:
+	    return jsonify(result="none")
+    except Exception as e:
+	print('Error %s' % e)
+	print('Error on line {}'.format(sys.exc_info()[-1].tb_lineno))
 	return jsonify(result="error")
 
 @app.route("/connectifyapi/authenticate", methods=["POST"])
@@ -151,9 +176,10 @@ def authenticate():
         if(_user == None):
             return jsonify(result='invalid')
         else:
-            return jsonify(result='valid')
+            return jsonify(dict(result='valid', visitor_id=_user["visitor_id"]))
     except Exception as e:
 	print('Error %s' % e)
+	print('Error on line {}'.format(sys.exc_info()[-1].tb_lineno))
 	return jsonify(result="error")
 
 @app.route("/connectifyapi/new-session", methods=["POST"])
@@ -162,22 +188,31 @@ def createSession():
     try:
 	json_data = request.get_json(force=True)
 	salt = json_data["salt"]
+	login = json_data["login"]
 	users = db["user-collection"]
 	_user = users.find_one({ "salt_": salt })
 	sessions = db["user-sessions"]
-	phoneNumber = _user["phoneNumber"]
+	userID = ""
+	phoneNumber = ""
+	if( login == 1 ):
+		phoneNumber = _user["phoneNumber"]
+	elif( login == 2 ):
+		userID = _user["userID"]
 	m = md5.new()
         m.update(str(time.time()))
         session_id = m.hexdigest()
 	sessions.update({"salt_": salt}, {
-                        "$set": {"salt_": salt, "session_id": session_id }}, upsert=True)
+                        "$set": {"userID": userID, "session_id": session_id, "phoneNumber": phoneNumber }}, upsert=True)
 	session_obj = dict(
 		phoneNumber = phoneNumber,
-		session_id = session_id
+		userID = userID,
+		session_id = session_id,
+		salt = salt
 	)
 	return jsonify(session=session_obj)
     except Exception as e:
 	print('Error %s' % e)
+	print('Error on line {}'.format(sys.exc_info()[-1].tb_lineno))
 	return jsonify(result="error")
 
 @app.route("/connectifyapi/destroy-session", methods=["DELETE"])
@@ -191,6 +226,7 @@ def deleteSession():
 	return jsonify(result="deleted")
     except Exception as e:
 	print('Error %s' % e)
+	print('Error on line {}'.format(sys.exc_info()[-1].tb_lineno))
 	return jsonify(result="error") 
 
 @app.route("/connectifyapi/check-session", methods=["GET"])
@@ -207,7 +243,52 @@ def checkSession():
             return jsonify(result='exists')
     except Exception as e:
 	print('Error %s' % e)
+	print('Error on line {}'.format(sys.exc_info()[-1].tb_lineno))
 	return jsonify(result="error")
+
+@app.route("/connectifyapi/fb-register", methods=["POST"])
+@cross_origin()
+def create_fb_user():
+    try:
+        json_data = request.get_json(force=True)
+        userID = json_data["userID"]
+        users = db['user-collection']
+        m = md5.new()
+        m.update(userID)
+        salt = m.hexdigest()
+        users.update({ "salt_": salt }, { "$set": { "phoneNumber": "", "password": "", "userID": userID }}, upsert=True, multi=True)
+	ok = dict(
+		status = 'ok',
+		salt = salt
+	)
+	return jsonify(result=ok)
+    except Exception as e:
+        e = sys.exc_info()[0]
+        print('error %s' % e)
+	print('Error on line {}'.format(sys.exc_info()[-1].tb_lineno))
+	error = dict(
+		status = 'error',
+		errorMsg = '%s' % e
+	)
+	return jsonify(result=error)
+
+@app.route("/connectifyapi/check-fb-user", methods=["POST"])
+@cross_origin()
+def check_fb_user():
+    try:
+        json_data = request.get_json(force=True)
+        userID = json_data["userID"]
+        users = db['user-collection']
+        _user = users.find_one({ "userID": userID })
+        if(_user == None):
+            return jsonify(result='invalid')
+        else:
+            return jsonify(result='valid')
+    except Exception as e:
+        e = sys.exc_info()[0]
+        print('error %s' % e)
+	print('Error on line {}'.format(sys.exc_info()[-1].tb_lineno))
+        return jsonify(result='error')
 
 if __name__ == "__main__":
     app.run(host=HOST, port=PORT)
