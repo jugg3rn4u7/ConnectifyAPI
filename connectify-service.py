@@ -77,6 +77,7 @@ def create_user():
 def send_code():
     try:
 	json_data = request.get_json(force=True)
+	visitor_id = json_data["visitor_id"]
 	receiverPhoneNumber = json_data["phoneNumber"]
 	twilioClient = TwilioRestClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 	
@@ -84,8 +85,8 @@ def send_code():
 	txtMessage = "Hi User! This is Connectify. Your verification code is {0}.".format(code)
 	twilioClient.messages.create(body=txtMessage, from_=TWILIO_SENDER_NUMBER, to=receiverPhoneNumber)
 	users = db['user-collection']
-	users.update({"phoneNumber": receiverPhoneNumber}, { 
-			"$set": {"phoneNumber": receiverPhoneNumber, "password": "", "verified": 0, "code": code, "salt_": "", "avatar": 0, "avatarName": 0 }}, upsert=True)
+	users.update({"visitor_id": visitor_id}, { 
+			"$set": {"phoneNumber": receiverPhoneNumber, "password": "", "verified": 0, "code": code, "salt_": "", "avatar": 0, "avatarName": 0, "display_name": "" }}, upsert=True)
 	return jsonify(result='ok')
     except TwilioRestException as e:
 	print(e)
@@ -97,13 +98,13 @@ def send_code():
 def verify_code():
     try:
 	json_data = request.get_json(force=True)
-	phoneNumber = json_data["phoneNumber"]
+	visitor_id = json_data["visitor_id"]
 	code = json_data["code"]
 	users = db["user-collection"]
-	_user = users.find_one({ "phoneNumber": phoneNumber })
+	_user = users.find_one({ "visitor_id": visitor_id })
 	saved_code = _user["code"]
 	if(saved_code == code):
-	    users.update(users.find_one({ "phoneNumber": phoneNumber }), { "$set": { "verified": 1 }})
+	    users.update(users.find_one({ "visitor_id": visitor_id }), { "$set": { "verified": 1 }})
 	    return jsonify(result='verified')
 	else:
 	    return jsonify(result='unverified')
@@ -288,6 +289,57 @@ def check_fb_user():
         e = sys.exc_info()[0]
         print('error %s' % e)
 	print('Error on line {}'.format(sys.exc_info()[-1].tb_lineno))
+        return jsonify(result='error')
+
+@app.route("/connectifyapi/save-display-name", methods=["POST"])
+@cross_origin()
+def save_display_name():
+    try:
+        json_data = request.get_json(force=True)
+        visitor_id = json_data["visitor_id"]
+	display_name = json_data["display_name"]
+        users = db['user-collection']
+        users.update({"visitor_id": visitor_id}, {
+                        "$set": {"display_name": display_name }}, upsert=True)
+        return jsonify(result='ok')
+    except Exception as e:
+        e = sys.exc_info()[0]
+        print('error %s' % e)
+        print('Error on line {}'.format(sys.exc_info()[-1].tb_lineno))
+        return jsonify(result='error')
+
+@app.route("/connectifyapi/save-first-name", methods=["POST"])
+@cross_origin()
+def save_first_name():
+    try:
+        json_data = request.get_json(force=True)
+        visitor_id = json_data["visitor_id"]
+        first_name = json_data["first_name"]
+        users = db['user-collection']
+        users.update({"visitor_id": visitor_id}, {
+                        "$set": {"first_name": first_name }}, upsert=True)
+        return jsonify(result='ok')
+    except Exception as e:
+        e = sys.exc_info()[0]
+        print('error %s' % e)
+        print('Error on line {}'.format(sys.exc_info()[-1].tb_lineno))
+        return jsonify(result='error')
+
+@app.route("/connectifyapi/save-last-name", methods=["POST"])
+@cross_origin()
+def save_last_name():
+    try:
+        json_data = request.get_json(force=True)
+        visitor_id = json_data["visitor_id"]
+        last_name = json_data["last_name"]
+        users = db['user-collection']
+        users.update({"visitor_id": visitor_id}, {
+                        "$set": {"last_name": last_name }}, upsert=True)
+        return jsonify(result='ok')
+    except Exception as e:
+        e = sys.exc_info()[0]
+        print('error %s' % e)
+        print('Error on line {}'.format(sys.exc_info()[-1].tb_lineno))
         return jsonify(result='error')
 
 if __name__ == "__main__":
